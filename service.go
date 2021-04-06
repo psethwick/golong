@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -39,6 +40,9 @@ func generate_key() string {
 }
 
 func lookup_redirect(key string) (string, error) {
+	if len(redirect_store) == 0 {
+		redirect_store = make(map[string]string)
+	}
 	url, ok := redirect_store[key]
 	if ok {
 		return url, nil
@@ -57,6 +61,13 @@ func get_url_from_request(r *http.Request) (string, error) {
 	if err != nil {
 		return "", errors.New(fmt.Sprintf("Could not parse body: %s", err.Error()))
 	}
+
+	_, err = url.ParseRequestURI(ur.Url)
+
+	if err != nil {
+		return "", err
+	}
+
 	return ur.Url, nil
 }
 
