@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -12,7 +13,7 @@ import (
 
 func TestGeneratedKeysCanBeUrlFragments(t *testing.T) {
 	for i := 0; i < 1000; i++ {
-		k := generate_key()
+		k := generateKey()
 		u := fmt.Sprintf("http://example.com/%s", k)
 
 		_, err := url.ParseRequestURI(u)
@@ -24,12 +25,12 @@ func TestGeneratedKeysCanBeUrlFragments(t *testing.T) {
 }
 
 func TestKeyRetrieval(t *testing.T) {
-	k := generate_key()
+	k := generateKey()
 	v := "fragment"
 
-	store_redirect(k, v)
+	storeRedirect(k, v)
 
-	rv, _ := lookup_redirect(k)
+	rv, _ := lookupRedirect(k)
 
 	if v != rv {
 		t.Errorf("Expected %s to be %s", rv, v)
@@ -37,9 +38,9 @@ func TestKeyRetrieval(t *testing.T) {
 }
 
 func TestKeyNonRetrieval(t *testing.T) {
-	k := generate_key()
+	k := generateKey()
 
-	_, err := lookup_redirect(k)
+	_, err := lookupRedirect(k)
 
 	if err == nil {
 		t.Errorf("Expected error, but did not get one")
@@ -47,12 +48,12 @@ func TestKeyNonRetrieval(t *testing.T) {
 }
 
 func TestGetRequestNotFound(t *testing.T) {
-	route := fmt.Sprintf("/%s", generate_key())
+	route := fmt.Sprintf("/%s", generateKey())
 	request, _ := http.NewRequest("GET", route, nil)
 
 	recorder := httptest.NewRecorder()
 
-	handler := http.HandlerFunc(request_handler)
+	handler := http.HandlerFunc(requestHandler)
 
 	handler.ServeHTTP(recorder, request)
 
@@ -62,20 +63,21 @@ func TestGetRequestNotFound(t *testing.T) {
 }
 
 func TestGetRequestRedirect(t *testing.T) {
-	key := generate_key()
+	key := generateKey()
 	url := "http://example.com"
-	store_redirect(key, url)
+	storeRedirect(key, url)
 
 	route := fmt.Sprintf("/%s", key)
 	request, _ := http.NewRequest("GET", route, nil)
 
 	recorder := httptest.NewRecorder()
 
-	handler := http.HandlerFunc(request_handler)
+	handler := http.HandlerFunc(requestHandler)
 	handler.ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusSeeOther {
 		t.Errorf("Should have been a 303, but was %d", recorder.Code)
+		return
 	}
 	res := recorder.Result()
 
@@ -85,7 +87,8 @@ func TestGetRequestRedirect(t *testing.T) {
 }
 
 func TestPostRequestStoresUrl(t *testing.T) {
-	ur := UrlRequest{"http://example.com"}
+	testUrl := "http://example.com"
+	ur := RedirectRequest{testUrl}
 	serialized, err := json.Marshal(ur)
 	if err != nil {
 		t.Errorf(err.Error())
@@ -96,7 +99,29 @@ func TestPostRequestStoresUrl(t *testing.T) {
 	request, _ := http.NewRequest("POST", "/", reader)
 	request.Header.Set("Content-Type", "application/json")
 
-	handler := http.HandlerFunc(request_handler)
+	handler := http.HandlerFunc(requestHandler)
 	handler.ServeHTTP(recorder, request)
 
+	res := recorder.Result()
+	body, err := ioutil.ReadAll(res.Body)
+
+	var rr RedirectResponse
+
+	err = json.Unmarshal(body, &rr)
+	if err != nil {
+		t.Errorf("could not parse %s: %s", body, err.Error())
+	}
+
+	key := strings.Replace(rr.Source, buildRedirectUrl(""), "", 1)
+
+	red, err := lookupRedirect(key)
+
+	if err != nil {
+		t.Errorf("could not find %s in redirect store", key)
+		return
+	}
+
+	if red != testUrl {
+		t.Errorf("Expected %s to be %s", red, testUrl)
+	}
 }

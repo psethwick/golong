@@ -12,24 +12,36 @@ import (
 	"strings"
 )
 
-var redirect_store map[string]string
+var redirectStore map[string]string
 var babbler babble.Babbler
 
-type UrlRequest struct {
-	Url string
+var host = "http://localhost"
+var port = "8080"
+
+type RedirectRequest struct {
+	Target string
 }
 
-func store_redirect(key string, url string) {
+type RedirectResponse struct {
+	Source string
+}
+
+func buildRedirectUrl(key string) string {
+	return fmt.Sprintf("%s:%s/%s", host, port, key)
+}
+
+func storeRedirect(key string, url string) {
 	log.Printf("storing key: %s, url: %s", key, url)
-	if len(redirect_store) == 0 {
-		redirect_store = make(map[string]string)
+	if len(redirectStore) == 0 {
+		redirectStore = make(map[string]string)
 	}
-	redirect_store[key] = url
+	redirectStore[key] = url
 }
 
-func generate_key() string {
+func generateKey() string {
 	if babbler.Count == 0 {
 		babbler = babble.NewBabbler()
+		babbler.Count = 3
 	}
 
 	key := babbler.Babble()
@@ -39,43 +51,53 @@ func generate_key() string {
 	return key
 }
 
-func lookup_redirect(key string) (string, error) {
-	if len(redirect_store) == 0 {
-		redirect_store = make(map[string]string)
-	}
-	url, ok := redirect_store[key]
+func lookupRedirect(key string) (string, error) {
+	url, ok := redirectStore[key]
 	if ok {
 		return url, nil
 	}
 	return "", errors.New(fmt.Sprintf("%s not found", key))
 }
 
-func get_url_from_request(r *http.Request) (string, error) {
+func getUrlFromRequest(r *http.Request) (string, error) {
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		return "", errors.New("Could not read body")
 	}
-	log.Printf(string(body))
-	var ur UrlRequest
-	err = json.Unmarshal(body, &ur)
+
+	var rr RedirectRequest
+	err = json.Unmarshal(body, &rr)
 	if err != nil {
 		return "", errors.New(fmt.Sprintf("Could not parse body: %s", err.Error()))
 	}
 
-	_, err = url.ParseRequestURI(ur.Url)
+	_, err = url.ParseRequestURI(rr.Target)
 
 	if err != nil {
 		return "", err
 	}
 
-	return ur.Url, nil
+	return rr.Target, nil
 }
 
-func request_handler(w http.ResponseWriter, r *http.Request) {
+func writeResponse(w http.ResponseWriter, key string) {
+	url := buildRedirectUrl(key)
+	rr, err := json.Marshal(RedirectResponse{url})
+
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(rr)
+}
+
+func requestHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		log.Printf("Received GET request with %s", r.URL.Path)
-		url, err := lookup_redirect(strings.ReplaceAll(r.URL.Path, "/", ""))
+		url, err := lookupRedirect(strings.ReplaceAll(r.URL.Path, "/", ""))
 		if err == nil {
 			http.Redirect(w, r, url, http.StatusSeeOther)
 		} else {
@@ -83,14 +105,16 @@ func request_handler(w http.ResponseWriter, r *http.Request) {
 		}
 
 	case http.MethodPost:
-		url, err := get_url_from_request(r)
+		url, err := getUrlFromRequest(r)
 		if err != nil {
-			log.Printf(err.Error())
-			http.Error(w, "Bad request", http.StatusBadRequest)
+			log.Printf("get_url_from_request: %s", err.Error())
+			w.WriteHeader(http.StatusBadRequest)
+			return
 		}
 		log.Printf("Received POST request with url %s", url)
-		key := generate_key()
-		store_redirect(key, url)
+		key := generateKey()
+		storeRedirect(key, url)
+		writeResponse(w, key)
 
 	default:
 		http.Error(w, fmt.Sprintf("Method %s not supported", r.Method), http.StatusMethodNotAllowed)
@@ -98,7 +122,7 @@ func request_handler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	http.HandleFunc("/", request_handler)
+	http.HandleFunc("/", requestHandler)
 
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%s", port), nil))
 }
