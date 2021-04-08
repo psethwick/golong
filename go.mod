@@ -1,4 +1,4 @@
-module ridersblock.net/golong
+module github.com/psethwick/golong
 
 go 1.16
 
